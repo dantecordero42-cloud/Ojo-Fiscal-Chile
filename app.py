@@ -106,36 +106,42 @@ with tab_sueldos:
     st.subheader("Auditoría Nacional de Sueldos Municipales (345 Comunas)")
     st.markdown("**Regla:** Evalúa el **líquido al bolsillo** (base + bonos + horas extras) con tope de **+30% sobre el mercado + 1.5% por año de servicio**.")
     
-    s_muni, s_mes, s_anio = st.columns(3)
+    s_muni, s_tipo = st.columns(2)
     with s_muni:
-        comuna_sueldo = st.text_input("🏛️ Municipio a fiscalizar en Sueldos:", value="Rancagua", placeholder="Ej. Rancagua, Las Condes, Santiago...", key="muni_s")
-    with s_mes:
-        meses_lista = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-        mes_sueldo = st.selectbox("📅 Mes de remuneración:", meses_lista, index=8, key="mes_s")
-    with s_anio:
-        anio_sueldo = st.selectbox("📆 Año:", ["2026", "2025", "2024"], key="anio_s")
+        comuna_sueldo = st.text_input("🏛️ Escribe el Municipio a fiscalizar:", value="Rancagua", placeholder="Ej. Rancagua, Las Condes, Santiago, Maipú...", key="muni_s")
+    with s_tipo:
+        tipo_contrato = st.selectbox("📋 Tipo de Contrato:", ["Personal de Planta", "Personal a Contrata", "Honorarios"], key="tipo_s")
 
     if st.button("🚀 Escanear Sueldos Automáticamente", type="primary"):
-        with st.spinner(f"Consultando base nacional del Consejo para la Transparencia para {comuna_sueldo.upper()} ({mes_sueldo} {anio_sueldo})..."):
-            url_cplt = "https://cplt.cl"
+        with st.spinner(f"Buscando a la Municipalidad de {comuna_sueldo.upper()} en los archivos nacionales del Consejo para la Transparencia..."):
+            urls_cplt = {
+                "Personal de Planta": "https://cplt.cl",
+                "Personal a Contrata": "https://cplt.cl",
+                "Honorarios": "https://cplt.cl"
+            }
+            url_elegida = urls_cplt[tipo_contrato]
+            
             try:
-                chunks = pd.read_csv(url_cplt, sep=';', encoding='latin-1', chunksize=5000, on_bad_lines='skip')
+                chunks = pd.read_csv(url_elegida, sep=';', encoding='latin-1', chunksize=10000, on_bad_lines='skip', low_memory=False)
                 filas_comuna = []
                 
                 for chunk in chunks:
-                    col_org = [c for c in chunk.columns if 'organismo' in str(c).lower() or 'institucion' in str(c).lower()]
-                    if col_org:
-                        filtro = chunk[chunk[col_org[0]].astype(str).str.contains(comuna_sueldo.strip(), case=False, na=False)]
-                        if not filtro.empty:
-                            filas_comuna.append(filtro)
+                    # Buscamos en TODAS las columnas de texto si aparece el nombre de la comuna
+                    mascara = chunk.apply(lambda col: col.astype(str).str.contains(comuna_sueldo.strip(), case=False, na=False)).any(axis=1)
+                    filtro = chunk[mascara]
+                    if not filtro.empty:
+                        filas_comuna.append(filtro)
+                    if len(filas_comuna) >= 3: # Detenemos al juntar suficientes datos para que sea rápido
+                        break
                 
                 if filas_comuna:
                     df = pd.concat(filas_comuna, ignore_index=True)
-                    st.success(f"✅ Se encontraron **{len(df)} funcionarios** de la Municipalidad de **{comuna_sueldo.upper()}** en la base nacional.")
+                    st.success(f"✅ ¡Conexión exitosa! Se encontraron **{len(df)} registros** vinculados a **{comuna_sueldo.upper()}** ({tipo_contrato}).")
                     
-                    col_cargo = [c for c in df.columns if 'cargo' in str(c).lower() or 'funcion' in str(c).lower()]
-                    col_liq = [c for c in df.columns if 'liquida' in str(c).lower() or 'líquida' in str(c).lower()]
+                    col_cargo = [c for c in df.columns if 'cargo' in str(c).lower() or 'funcion' in str(c).lower() or 'función' in str(c).lower()]
+                    col_liq = [c for c in df.columns if 'liquida' in str(c).lower() or 'líquida' in str(c).lower() or 'bruta' in str(c).lower()]
                     col_nom = [c for c in df.columns if 'nombre' in str(c).lower()]
+                    col_fecha = [c for c in df.columns if 'anyo' in str(c).lower() or 'año' in str(c).lower() or 'mes' in str(c).lower()]
                     
                     if col_cargo and col_liq:
                         c_c, c_l = col_cargo[0], col_liq[0]
@@ -144,7 +150,8 @@ with tab_sueldos:
                         
                         for _, fila in df.iterrows():
                             cargo = str(fila[c_c]).strip().upper()
-                            nombre = str(fila[col_nom[0]]).strip() if col_nom else "Funcionario Municipal"
+                            nombre = str(fila[col_nom[0]]).strip() if col_nom else "Funcionario"
+                            periodo = f"{fila[col_fecha[0]]}" if col_fecha else "Reciente"
                             liq_str = str(fila[c_l]).replace('$', '').replace('.', '').replace(',', '').strip()
                             if liq_str.isdigit():
                                 liquido = float(liq_str)
@@ -154,19 +161,23 @@ with tab_sueldos:
                                         if liquido > tope:
                                             exc = ((liquido - tope) / tope) * 100
                                             resultados.append({
+                                                "Período": periodo,
                                                 "Funcionario": nombre,
                                                 "Cargo": cargo,
-                                                "Líquido al Bolsillo": f"${liquido:,.0f}",
+                                                "Remuneración Detectada": f"${liquido:,.0f}",
                                                 "Tope Ético (+30%)": f"${tope:,.0f}",
                                                 "Exceso": f"+{exc:.0f}%"
                                             })
                                         break
                         if resultados:
-                            st.error(f"🚨 Se detectaron **{len(resultados)} sueldos** que superan el +30% en {comuna_sueldo.upper()}:")
+                            st.error(f"🚨 Se detectaron **{len(resultados)} remuneraciones** que superan el +30% en {comuna_sueldo.upper()}:")
                             st.dataframe(pd.DataFrame(resultados), use_container_width=True)
                         else:
-                            st.info("No se encontraron excesos sobre el 30% en los registros analizados.")
+                            st.info("Registros analizados sin excesos sobre el 30% en los cargos base. Mostrando vista previa:")
+                            st.dataframe(df.head(15), use_container_width=True)
+                    else:
+                        st.dataframe(df.head(20), use_container_width=True)
                 else:
-                    st.warning(f"No se encontraron registros recientes para '{comuna_sueldo}' en el consolidado nacional.")
+                    st.warning(f"No se encontraron datos para '{comuna_sueldo}' en este archivo. Intenta escribir solo el nombre principal (ej. 'Rancagua' o 'Condes').")
             except Exception as e:
-                st.error("El servidor central del Consejo para la Transparencia está saturado en este momento. Intenta nuevamente en unos segundos.")
+                st.error("El servidor nacional de Transparencia está saturado en este momento. Intenta nuevamente en unos segundos.")
