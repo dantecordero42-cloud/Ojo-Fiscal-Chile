@@ -7,12 +7,10 @@ import urllib3
 urllib3.disable_warnings()
 
 st.set_page_config(page_title="Ojo Fiscal Chile", page_icon="🚨", layout="wide")
-
 st.title("🚨 Ojo Fiscal Chile")
 st.markdown("Control ciudadano automatizado de gastos públicos. **Tope ético base: +30% sobre el valor de mercado privado.**")
 
 TICKET_OFICIAL = st.secrets.get("TICKET_CHILECOMPRA", "F8537A18-6766-4DEF-9E59-426B4FEE2844")
-
 tab_compras, tab_sueldos = st.tabs(["🛒 Compras Públicas (En Vivo)", "💼 Sueldos Municipales (Planta y Contrata)"])
 
 with tab_compras:
@@ -45,12 +43,12 @@ with tab_compras:
                         url_det = f"https://mercadopublico.cl{cod_orden}&ticket={TICKET_OFICIAL}"
                         det = requests.get(url_det, verify=False, timeout=15).json()
                         if 'Listado' in det and len(det['Listado']) > 0:
-                            info_orden = det['Listado'][0] if isinstance(det['Listado'], list) else det['Listado']
+                            info_orden = det['Listado'] if isinstance(det['Listado'], list) else det['Listado']
                             descripcion_general = str(info_orden.get('Descripcion', '')).lower()
                             items_raw = info_orden.get('Items', {}).get('Listado', [])
                             items = items_raw if isinstance(items_raw, list) else [items_raw]
                             if items and len(items) > 0:
-                                primer_item = items[0]
+                                primer_item = items
                                 prod_nombre = primer_item.get('Producto', 'Producto sin nombre')
                                 precio_muni = float(primer_item.get('PrecioNeto', 0))
                                 palabras_just = ['instalacion', 'instalación', 'mantencion', 'mantención', 'garantia', 'garantía', 'flete', 'despacho', 'soporte', 'servicio']
@@ -72,77 +70,57 @@ with tab_compras:
                                         if precio_muni > tope_30:
                                             exceso = ((precio_muni - prom_mercado) / prom_mercado) * 100
                                             if justificado:
-                                                st.warning(f"⚠️ **SOBREPRECIO (+{exceso:.0f}%) CON POSIBLE JUSTIFICACIÓN:** Incluye servicios adicionales. Requiere revisión.")
+                                                st.warning(f"⚠️ **SOBREPRECIO (+{exceso:.0f}%) CON POSIBLE JUSTIFICACIÓN:** Incluye servicios adicionales.")
                                             else:
                                                 st.error(f"🚨 **¡ALERTA ROJA INJUSTIFICADA!** Se pagó un **{exceso:.0f}% MÁS CARO** que el retail.")
-                                                texto_denuncia = f"🚨 ALERTA OJO FISCAL CHILE\n🏛️ Institución: {muni_elegida}\n📦 Compra: {prod_nombre} (Orden {cod_orden})\n🛒 Valor real en Chile: ${prom_mercado:,.0f}\n💸 Pagado por el Estado: ${precio_muni:,.0f} (+{exceso:.0f}% de sobreprecio)\n#OjoFiscalChile #TransparenciaChile"
+                                                texto_denuncia = f"🚨 ALERTA OJO FISCAL CHILE\n🏛️ Institución: {muni_elegida}\n📦 Compra: {prod_nombre} (Orden {cod_orden})\n🛒 Valor real: ${prom_mercado:,.0f}\n💸 Pagado: ${precio_muni:,.0f} (+{exceso:.0f}%)\n#OjoFiscalChile"
                                                 st.code(texto_denuncia, language="text")
                                         else:
                                             st.success("✅ **COMPRA VISADA:** Dentro del margen permitido del 30%.")
                                     else:
-                                        st.write("ℹ️ Producto especializado o servicio técnico sin equivalente directo en retail.")
+                                        st.write("ℹ️ Producto especializado sin equivalente directo en retail.")
                 else:
-                    st.warning("No hay órdenes emitidas en esta fecha exacta. Prueba seleccionando un día hábil anterior.")
+                    st.warning("No hay órdenes emitidas en esta fecha exacta. Prueba un día hábil anterior.")
             except Exception as e:
-                st.error("Error de conexión con Mercado Público. Intenta nuevamente en unos segundos.")
-
+                st.error("Error de conexión con Mercado Público. Intenta nuevamente.")
 with tab_sueldos:
     st.subheader("Auditoría de Sueldos Líquidos vs. Mercado Privado")
-    st.markdown("""
-    **Regla de Cálculo Justo:** 
-    * Evalúa el **sueldo líquido real al bolsillo** (base + bonos + horas extras).
-    * Aplica **+30% de margen máximo** sobre el mercado privado + **+1.5% adicional por cada año de servicio**.
-    """)
-    archivo_csv = st.file_uploader("📂 Sube la planilla CSV de Transparencia Activa de cualquier municipio", type=["csv"])
+    st.markdown("**Regla:** Evalúa el **líquido al bolsillo** (base + bonos + horas extras) con tope de **+30% sobre el mercado + 1.5% por año de servicio**.")
+    archivo_csv = st.file_uploader("📂 Sube la planilla CSV de Transparencia Activa", type=["csv"])
     if archivo_csv is not None:
         try:
             df = pd.read_csv(archivo_csv, skiprows=3)
             df = df.dropna(subset=['Cargo o función', 'Remuneración líquida'])
             df['Liquido_Num'] = pd.to_numeric(df['Remuneración líquida'], errors='coerce').fillna(0)
             df['Bonos_Num'] = pd.to_numeric(df.get('Remuneración Bonos incentivos mensualizada', 0), errors='coerce').fillna(0)
-            h_diurnas = pd.to_numeric(df.get('Remuneración horas diurnas', 0), errors='coerce').fillna(0)
-            h_nocturnas = pd.to_numeric(df.get('Remuneración horas nocturnas', 0), errors='coerce').fillna(0)
-            h_festivas = pd.to_numeric(df.get('Remuneración horas festivas', 0), errors='coerce').fillna(0)
-            df['Plata_HE'] = h_diurnas + h_nocturnas + h_festivas
-            cant_d = pd.to_numeric(df.get('Nº horas diurnas', 0), errors='coerce').fillna(0)
-            cant_n = pd.to_numeric(df.get('Nº horas nocturnas', 0), errors='coerce').fillna(0)
-            cant_f = pd.to_numeric(df.get('Nº horas festivas', 0), errors='coerce').fillna(0)
-            df['Cant_HE'] = cant_d + cant_n + cant_f
-            referencia_mercado = {
-                'AUXILIAR': 550000,
-                'CONDUCTOR': 750000,
-                'ADMINISTRATIVA': 700000,
-                'SECRETARIA': 750000,
-                'INSPECTOR': 850000,
-                'TECNICO': 950000,
-                'PROFESIONAL': 1600000
-            }
+            df['Plata_HE'] = pd.to_numeric(df.get('Remuneración horas diurnas', 0), errors='coerce').fillna(0) + pd.to_numeric(df.get('Remuneración horas nocturnas', 0), errors='coerce').fillna(0) + pd.to_numeric(df.get('Remuneración horas festivas', 0), errors='coerce').fillna(0)
+            df['Cant_HE'] = pd.to_numeric(df.get('Nº horas diurnas', 0), errors='coerce').fillna(0) + pd.to_numeric(df.get('Nº horas nocturnas', 0), errors='coerce').fillna(0) + pd.to_numeric(df.get('Nº horas festivas', 0), errors='coerce').fillna(0)
+            referencia = {'AUXILIAR': 550000, 'CONDUCTOR': 750000, 'ADMINISTRATIVA': 700000, 'SECRETARIA': 750000, 'INSPECTOR': 850000, 'TECNICO': 950000, 'PROFESIONAL': 1600000}
             anio_actual = datetime.now().year
-            resultados_alerta = []
+            resultados = []
             for _, fila in df.iterrows():
                 cargo = str(fila['Cargo o función']).strip().upper()
                 liquido = fila['Liquido_Num']
-                bonos = fila['Bonos_Num']
-                plata_he = fila['Plata_HE']
-                cant_he = fila['Cant_HE']
                 nombre = f"{str(fila['Nombres']).strip()} {str(fila['Primer apellido']).strip()}"
-                fecha_ini_str = str(fila.get('Fecha de inicio dd/mm/aa', ''))
-                anios_servicio = 0
+                fecha_ini = str(fila.get('Fecha de inicio dd/mm/aa', ''))
+                anios = 0
                 try:
-                    if '/' in fecha_ini_str:
-                        anio_ingreso = int(fecha_ini_str.split('/')[-1])
-                        if anio_ingreso < 100:
-                            anio_ingreso += 1900 if anio_ingreso > 30 else 2000
-                        anios_servicio = max(0, anio_actual - anio_ingreso)
-                except:
-                    anios_servicio = 0
-                for clave, base_privada in referencia_mercado.items():
+                    if '/' in fecha_ini:
+                        a_ing = int(fecha_ini.split('/')[-1])
+                        if a_ing < 100: a_ing += 1900 if a_ing > 30 else 2000
+                        anios = max(0, anio_actual - a_ing)
+                except: pass
+                for clave, base in referencia.items():
                     if clave in cargo:
-                        factor_antiguedad = anios_servicio * 0.015
-                        tope_justo = base_privada * (1.30 + factor_antiguedad)
-                        if liquido > tope_justo:
-                            exceso_pct = ((liquido - tope_justo) / tope_justo) * 100
-                            resultados_alerta.append({
-                                "Funcionario": nombre,
-                                "Cargo": cargo,
-                                "Años Servicio": anios_servicio,
+                        tope = base * (1.30 + (anios * 0.015))
+                        if liquido > tope:
+                            exc = ((liquido - tope) / tope) * 100
+                            resultados.append({"Funcionario": nombre, "Cargo": cargo, "Años": anios, "Líquido": f"${liquido:,.0f}", "Tope Justo": f"${tope:,.0f}", "Bonos": f"${fila['Bonos_Num']:,.0f}", "H. Extras": f"{fila['Cant_HE']:.0f}h (${fila['Plata_HE']:,.0f})", "Exceso": f"+{exc:.0f}%"})
+                        break
+            if resultados:
+                st.error(f"🚨 Se detectaron **{len(resultados)} funcionarios** que superan el límite justo:")
+                st.dataframe(pd.DataFrame(resultados), use_container_width=True)
+            else:
+                st.success("✅ Todos los sueldos están dentro del rango justo.")
+        except Exception as e:
+            st.error("Asegúrate de subir un CSV oficial de Transparencia Activa.")
