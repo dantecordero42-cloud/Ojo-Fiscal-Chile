@@ -103,79 +103,74 @@ with tab_compras:
         else:
             st.warning("Escribe el nombre de una comuna para buscar.")
 with tab_sueldos:
-    st.subheader("Auditoría Nacional de Sueldos Municipales (345 Comunas)")
+    st.subheader("Auditoría de Sueldos Municipales (Base de Datos Autónoma)")
     st.markdown("**Regla:** Evalúa el **líquido al bolsillo** (base + bonos + horas extras) con tope de **+30% sobre el mercado + 1.5% por año de servicio**.")
     
-    s_muni, s_tipo = st.columns(2)
-    with s_muni:
-        comuna_sueldo = st.text_input("🏛️ Escribe el Municipio a fiscalizar:", value="Rancagua", placeholder="Ej. Rancagua, Las Condes, Santiago, Maipú...", key="muni_s")
-    with s_tipo:
-        tipo_contrato = st.selectbox("📋 Tipo de Contrato:", ["Personal de Planta", "Personal a Contrata", "Honorarios"], key="tipo_s")
-
-    if st.button("🚀 Escanear Sueldos Automáticamente", type="primary"):
-        with st.spinner(f"Barriendo la base nacional completa para encontrar {comuna_sueldo.upper()}..."):
-            urls_cplt = {
-                "Personal de Planta": "https://cplt.cl",
-                "Personal a Contrata": "https://cplt.cl",
-                "Honorarios": "https://cplt.cl"
-            }
-            url_elegida = urls_cplt[tipo_contrato]
+    # Menú conectado directamente a las bases de datos almacenadas en tu repositorio
+    bases_disponibles = {
+        "Ilustre Municipalidad de Las Condes (Planta)": "las_condes.csv"
+    }
+    
+    muni_elegida_s = st.selectbox("🏛️ Selecciona el Municipio a auditar:", list(bases_disponibles.keys()), key="sel_base_s")
+    
+    if st.button("🚀 Escanear Sueldos Ahora", type="primary"):
+        archivo_local = bases_disponibles[muni_elegida_s]
+        try:
+            df = pd.read_csv(archivo_local, skiprows=3)
+            df = df.dropna(subset=['Cargo o función', 'Remuneración líquida'])
             
-            try:
-                # Lee todo el archivo nacional en bloques grandes sin detenerse
-                chunks = pd.read_csv(url_elegida, sep=';', encoding='latin-1', chunksize=50000, on_bad_lines='skip', low_memory=False)
-                filas_comuna = []
-                primeras_columnas = []
+            df['Liquido_Num'] = pd.to_numeric(df['Remuneración líquida'], errors='coerce').fillna(0)
+            df['Bonos_Num'] = pd.to_numeric(df.get('Remuneración Bonos incentivos mensualizada', 0), errors='coerce').fillna(0)
+            
+            h_diurnas = pd.to_numeric(df.get('Remuneración horas diurnas', 0), errors='coerce').fillna(0)
+            h_nocturnas = pd.to_numeric(df.get('Remuneración horas nocturnas', 0), errors='coerce').fillna(0)
+            h_festivas = pd.to_numeric(df.get('Remuneración horas festivas', 0), errors='coerce').fillna(0)
+            df['Plata_HE'] = h_diurnas + h_nocturnas + h_festivas
+            
+            cant_d = pd.to_numeric(df.get('Nº horas diurnas', 0), errors='coerce').fillna(0)
+            cant_n = pd.to_numeric(df.get('Nº horas nocturnas', 0), errors='coerce').fillna(0)
+            cant_f = pd.to_numeric(df.get('Nº horas festivas', 0), errors='coerce').fillna(0)
+            df['Cant_HE'] = cant_d + cant_n + cant_f
+            
+            referencia = {'AUXILIAR': 550000, 'CONDUCTOR': 750000, 'ADMINISTRATIVA': 700000, 'SECRETARIA': 750000, 'INSPECTOR': 850000, 'TECNICO': 950000, 'PROFESIONAL': 1600000}
+            anio_actual = datetime.now().year
+            resultados = []
+            
+            for _, fila in df.iterrows():
+                cargo = str(fila['Cargo o función']).strip().upper()
+                liquido = fila['Liquido_Num']
+                nombre = f"{str(fila['Nombres']).strip()} {str(fila['Primer apellido']).strip()}"
                 
-                for chunk in chunks:
-                    if not primeras_columnas:
-                        primeras_columnas = list(chunk.columns)
-                    mascara = chunk.apply(lambda col: col.astype(str).str.contains(comuna_sueldo.strip(), case=False, na=False)).any(axis=1)
-                    filtro = chunk[mascara]
-                    if not filtro.empty:
-                        filas_comuna.append(filtro)
+                fecha_ini = str(fila.get('Fecha de inicio dd/mm/aa', ''))
+                anios = 0
+                try:
+                    if '/' in fecha_ini:
+                        a_ing = int(fecha_ini.split('/')[-1])
+                        if a_ing < 100: a_ing += 1900 if a_ing > 30 else 2000
+                        anios = max(0, anio_actual - a_ing)
+                except: pass
                 
-                if filas_comuna:
-                    df = pd.concat(filas_comuna, ignore_index=True)
-                    st.success(f"✅ ¡Conexión exitosa! Se encontraron **{len(df)} registros** de **{comuna_sueldo.upper()}** ({tipo_contrato}).")
-                    
-                    col_cargo = [c for c in df.columns if 'cargo' in str(c).lower() or 'funcion' in str(c).lower() or 'función' in str(c).lower()]
-                    col_liq = [c for c in df.columns if 'liquida' in str(c).lower() or 'líquida' in str(c).lower() or 'bruta' in str(c).lower()]
-                    col_nom = [c for c in df.columns if 'nombre' in str(c).lower()]
-                    
-                    if col_cargo and col_liq:
-                        c_c, c_l = col_cargo, col_liq
-                        referencia = {'AUXILIAR': 550000, 'CONDUCTOR': 750000, 'ADMINISTRATIVA': 700000, 'SECRETARIA': 750000, 'INSPECTOR': 850000, 'TECNICO': 950000, 'PROFESIONAL': 1600000}
-                        resultados = []
+                for clave, base in referencia.items():
+                    if clave in cargo:
+                        tope = base * (1.30 + (anios * 0.015))
+                        if liquido > tope:
+                            exc = ((liquido - tope) / tope) * 100
+                            resultados.append({
+                                "Funcionario": nombre,
+                                "Cargo": cargo,
+                                "Años Servicio": anios,
+                                "Líquido Bolsillo": f"${liquido:,.0f}",
+                                "Tope Justo (+30%+Antig.)": f"${tope:,.0f}",
+                                "Bonos": f"${fila['Bonos_Num']:,.0f}",
+                                "H. Extras": f"{fila['Cant_HE']:.0f}h (${fila['Plata_HE']:,.0f})",
+                                "Exceso": f"+{exc:.0f}%"
+                            })
+                        break
                         
-                        for _, fila in df.iterrows():
-                            cargo = str(fila[c_c]).strip().upper()
-                            nombre = str(fila[col_nom]).strip() if col_nom else "Funcionario"
-                            liq_str = str(fila[c_l]).replace('$', '').replace('.', '').replace(',', '').strip()
-                            if liq_str.isdigit():
-                                liquido = float(liq_str)
-                                for clave, base in referencia.items():
-                                    if clave in cargo:
-                                        tope = base * 1.30
-                                        if liquido > tope:
-                                            exc = ((liquido - tope) / tope) * 100
-                                            resultados.append({
-                                                "Funcionario": nombre,
-                                                "Cargo": cargo,
-                                                "Remuneración Detectada": f"${liquido:,.0f}",
-                                                "Tope Ético (+30%)": f"${tope:,.0f}",
-                                                "Exceso": f"+{exc:.0f}%"
-                                            })
-                                        break
-                        if resultados:
-                            st.error(f"🚨 Se detectaron **{len(resultados)} remuneraciones** que superan el +30% en {comuna_sueldo.upper()}:")
-                            st.dataframe(pd.DataFrame(resultados), use_container_width=True)
-                        else:
-                            st.info("Registros encontrados sin excesos sobre el 30% en los cargos base. Vista previa:")
-                            st.dataframe(df.head(15), use_container_width=True)
-                    else:
-                        st.dataframe(df.head(20), use_container_width=True)
-                else:
-                    st.warning(f"El servidor del Consejo para la Transparencia devolvió un archivo vacío o cambió la ruta de descarga directa. Columnas leídas: {primeras_columnas[:4]}")
-            except Exception as e:
-                st.error(f"Error de conexión con el servidor nacional: {e}")
+            if resultados:
+                st.error(f"🚨 Se detectaron **{len(resultados)} funcionarios** que superan el límite justo en {muni_elegida_s}:")
+                st.dataframe(pd.DataFrame(resultados), use_container_width=True)
+            else:
+                st.success("✅ Todos los sueldos analizados están dentro del rango justo.")
+        except Exception as e:
+            st.error("Asegúrate de haber subido el archivo 'las_condes.csv' a tu carpeta principal de GitHub.")
