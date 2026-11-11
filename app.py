@@ -108,7 +108,7 @@ with tab_sueldos:
     
     # Menú conectado directamente a las bases de datos almacenadas en tu repositorio
     bases_disponibles = {
-        "Ilustre Municipalidad de Las Condes (Planta)": "las_condes.csv"
+        "Ilustre Municipalidad de Las Condes (Planta)": "las condes.csv"
     }
     
     muni_elegida_s = st.selectbox("🏛️ Selecciona el Municipio a auditar:", list(bases_disponibles.keys()), key="sel_base_s")
@@ -173,4 +173,4 @@ with tab_sueldos:
             else:
                 st.success("✅ Todos los sueldos analizados están dentro del rango justo.")
         except Exception as e:
-            st.error("Asegúrate de haber subido el archivo 'las_condes.csv' a tu carpeta principal de GitHub.")
+            st.error("Asegúrate de haber subido el archivo 'las condes.csv' a tu carpeta principal de GitHub.")
