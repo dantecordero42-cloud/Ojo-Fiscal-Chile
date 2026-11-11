@@ -2,5 +2,6 @@ streamlit
 requests
 beautifulsoup4
 pandas
-lxml
-html5lib
+openpyxl
+xlrd
+python-calamine
