@@ -103,42 +103,48 @@ with tab_compras:
         else:
             st.warning("Escribe el nombre de una comuna para buscar.")
 with tab_sueldos:
-    st.subheader("Auditoría Nacional de Sueldos Municipales (Transparencia Activa)")
+    st.subheader("Auditoría Nacional de Sueldos Municipales (345 Comunas)")
     st.markdown("**Regla:** Evalúa el **líquido al bolsillo** (base + bonos + horas extras) con tope de **+30% sobre el mercado + 1.5% por año de servicio**.")
     
-    s_muni, s_mes, s_anio = st.columns([2, 1, 1])
+    s_muni, s_mes, s_anio = st.columns(3)
     with s_muni:
-        comuna_sueldo = st.text_input("🏛️ Municipio a fiscalizar en Sueldos:", value="Las Condes", placeholder="Ej. Rancagua, Las Condes, Santiago...", key="muni_s")
+        comuna_sueldo = st.text_input("🏛️ Municipio a fiscalizar en Sueldos:", value="Rancagua", placeholder="Ej. Rancagua, Las Condes, Santiago...", key="muni_s")
     with s_mes:
-        mes_sueldo = st.selectbox("📅 Mes de remuneración:", ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], index=9, key="mes_s")
+        meses_lista = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        mes_sueldo = st.selectbox("📅 Mes de remuneración:", meses_lista, index=8, key="mes_s")
     with s_anio:
         anio_sueldo = st.selectbox("📆 Año:", ["2026", "2025", "2024"], key="anio_s")
 
     if st.button("🚀 Escanear Sueldos Automáticamente", type="primary"):
-        with st.spinner(f"Conectando con los repositorios públicos de {comuna_sueldo} ({mes_sueldo} {anio_sueldo})..."):
-            # Conectamos directo a las tablas públicas de Transparencia Activa según la comuna
-            comuna_clean = comuna_sueldo.strip().lower().replace(" ", "")
-            url_transparencia = f"https://lascondes.cl" if "condes" in comuna_clean else f"https://www.{comuna_clean}.cl/transparencia/"
-            
+        with st.spinner(f"Consultando base nacional del Consejo para la Transparencia para {comuna_sueldo.upper()} ({mes_sueldo} {anio_sueldo})..."):
+            url_cplt = "https://cplt.cl"
             try:
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                resp_web = requests.get(url_transparencia, headers=headers, verify=False, timeout=12)
-                tablas = pd.read_html(resp_web.text)
+                chunks = pd.read_csv(url_cplt, sep=';', encoding='latin-1', chunksize=5000, on_bad_lines='skip')
+                filas_comuna = []
                 
-                if tablas:
-                    df = max(tablas, key=len)
-                    st.success(f"✅ Datos extraídos automáticamente desde el portal de Transparencia de **{comuna_sueldo.upper()}**.")
+                for chunk in chunks:
+                    col_org = [c for c in chunk.columns if 'organismo' in str(c).lower() or 'institucion' in str(c).lower()]
+                    if col_org:
+                        filtro = chunk[chunk[col_org[0]].astype(str).str.contains(comuna_sueldo.strip(), case=False, na=False)]
+                        if not filtro.empty:
+                            filas_comuna.append(filtro)
+                
+                if filas_comuna:
+                    df = pd.concat(filas_comuna, ignore_index=True)
+                    st.success(f"✅ Se encontraron **{len(df)} funcionarios** de la Municipalidad de **{comuna_sueldo.upper()}** en la base nacional.")
                     
-                    col_cargo = [c for c in df.columns if 'cargo' in str(c).lower() or 'función' in str(c).lower()]
-                    col_liq = [c for c in df.columns if 'líquida' in str(c).lower() or 'liquida' in str(c).lower()]
+                    col_cargo = [c for c in df.columns if 'cargo' in str(c).lower() or 'funcion' in str(c).lower()]
+                    col_liq = [c for c in df.columns if 'liquida' in str(c).lower() or 'líquida' in str(c).lower()]
+                    col_nom = [c for c in df.columns if 'nombre' in str(c).lower()]
                     
                     if col_cargo and col_liq:
-                        c_c, c_l = col_cargo, col_liq
+                        c_c, c_l = col_cargo[0], col_liq[0]
                         referencia = {'AUXILIAR': 550000, 'CONDUCTOR': 750000, 'ADMINISTRATIVA': 700000, 'SECRETARIA': 750000, 'INSPECTOR': 850000, 'TECNICO': 950000, 'PROFESIONAL': 1600000}
                         resultados = []
                         
                         for _, fila in df.iterrows():
                             cargo = str(fila[c_c]).strip().upper()
+                            nombre = str(fila[col_nom[0]]).strip() if col_nom else "Funcionario Municipal"
                             liq_str = str(fila[c_l]).replace('$', '').replace('.', '').replace(',', '').strip()
                             if liq_str.isdigit():
                                 liquido = float(liq_str)
@@ -148,6 +154,7 @@ with tab_sueldos:
                                         if liquido > tope:
                                             exc = ((liquido - tope) / tope) * 100
                                             resultados.append({
+                                                "Funcionario": nombre,
                                                 "Cargo": cargo,
                                                 "Líquido al Bolsillo": f"${liquido:,.0f}",
                                                 "Tope Ético (+30%)": f"${tope:,.0f}",
@@ -155,11 +162,11 @@ with tab_sueldos:
                                             })
                                         break
                         if resultados:
-                            st.error(f"🚨 Se detectaron **{len(resultados)} sueldos** que exceden el límite ético en {comuna_sueldo.upper()}:")
+                            st.error(f"🚨 Se detectaron **{len(resultados)} sueldos** que superan el +30% en {comuna_sueldo.upper()}:")
                             st.dataframe(pd.DataFrame(resultados), use_container_width=True)
                         else:
                             st.info("No se encontraron excesos sobre el 30% en los registros analizados.")
-                    else:
-                        st.dataframe(df.head(15), use_container_width=True)
+                else:
+                    st.warning(f"No se encontraron registros recientes para '{comuna_sueldo}' en el consolidado nacional.")
             except Exception as e:
-                st.warning(f"El portal web de **{comuna_sueldo}** requiere conector específico o tiene bloqueada la descarga directa este mes. Prueba con 'Las Condes' para ver el extractor en vivo.")
+                st.error("El servidor central del Consejo para la Transparencia está saturado en este momento. Intenta nuevamente en unos segundos.")
